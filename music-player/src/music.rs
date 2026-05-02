@@ -10,12 +10,14 @@ use crate::audio::AudioController;
 pub struct PlayerInfo {
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub status: PlaybackStatus,
     pub volume: f64,
     pub art_url: Option<String>,
     pub bus_name: String,
     pub identity: String,
     pub can_control_volume: bool,
+    pub position_us: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -29,12 +31,14 @@ impl Default for PlayerInfo {
         Self {
             title: "No music playing".to_string(),
             artist: String::new(),
+            album: String::new(),
             status: PlaybackStatus::Stopped,
             volume: 0.5,
             art_url: None,
             bus_name: String::new(),
             identity: String::new(),
             can_control_volume: true,
+            position_us: 0,
         }
     }
 }
@@ -160,6 +164,9 @@ impl MusicController {
             .map(|artists| artists.join(", "))
             .unwrap_or_else(|| "Unknown Artist".to_string());
 
+        let album = metadata.album_name().map(|s| s.to_string()).unwrap_or_default();
+        let position_us = player.get_position().ok().map(|d| d.as_micros() as u64).unwrap_or(0);
+
         let art_url = metadata.art_url().map(|url| url.to_string());
         let bus_name = player.bus_name_player_name_part().to_string();
         let identity = player.identity().to_string();
@@ -179,12 +186,14 @@ impl MusicController {
         PlayerInfo {
             title,
             artist,
+            album,
             status,
             volume,
             art_url,
             bus_name,
             identity,
             can_control_volume,
+            position_us,
         }
     }
 
@@ -215,6 +224,8 @@ impl MusicController {
                 .map(|artists| artists.join(", "))
                 .unwrap_or_else(|| "Unknown Artist".to_string());
 
+            let album = metadata.album_name().map(|s| s.to_string()).unwrap_or_default();
+            let position_us = player.get_position().ok().map(|d| d.as_micros() as u64).unwrap_or(0);
             let art_url = metadata.art_url().map(|url| url.to_string());
             let identity = player.identity().to_string();
 
@@ -232,12 +243,14 @@ impl MusicController {
             let player_info = PlayerInfo {
                 title,
                 artist,
+                album,
                 status,
                 volume,
                 art_url,
                 bus_name: bus_name.clone(),
                 identity: identity.clone(),
                 can_control_volume,
+                position_us,
             };
 
             // Separate Firefox players for deduplication

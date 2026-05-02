@@ -1,6 +1,7 @@
 use crate::app::{CosmicAppletMusic, Message, PopupTab};
 use cosmic::{theme, Element};
 use mpris::PlaybackStatus;
+use crate::lyrics;
 
 pub fn view_window(app: &CosmicAppletMusic, _id: cosmic::iced::window::Id) -> Element<'_, Message> {
     let cosmic::cosmic_theme::Spacing {
@@ -180,18 +181,85 @@ fn view_controls_tab(app: &CosmicAppletMusic, space_s: f32, space_m: f32) -> Ele
         .push(cosmic::widget::icon::from_name("audio-volume-high-symbolic").size(16))
         .align_y(cosmic::iced::Alignment::Center);
 
-    cosmic::widget::column()
+    let show_lyrics = app
+        .config_manager
+        .as_ref()
+        .map(|c| c.get_show_lyrics())
+        .unwrap_or(false);
+
+    let mut col = cosmic::widget::column()
         .spacing(space_m)
         .push(info_row)
-        .push(cosmic::widget::divider::horizontal::default())
-        .push(
-            cosmic::widget::container(controls)
-                .align_x(cosmic::iced::alignment::Horizontal::Center)
-                .width(cosmic::iced::Length::Fill),
-        )
-        .push(cosmic::widget::divider::horizontal::default())
-        .push(volume_row)
-        .into()
+        .push(cosmic::widget::divider::horizontal::default());
+
+    // Muse-inspired lyrics display: three centered lines (prev dim, current large, next dim)
+    if show_lyrics && !app.lyrics.is_empty() {
+        let idx = lyrics::current_line_idx(&app.lyrics, app.player_info.position_us);
+
+        let prev_text = if idx > 0 {
+            app.lyrics[idx - 1].text.clone()
+        } else {
+            String::new()
+        };
+
+        let current_text = if app.current_lyric.is_empty() {
+            app.lyrics.get(idx).map(|l| l.text.clone()).unwrap_or_default()
+        } else {
+            app.current_lyric.clone()
+        };
+
+        let next_text = app
+            .lyrics
+            .get(idx + 1)
+            .map(|l| l.text.clone())
+            .unwrap_or_default();
+
+        let mut lyric_col = cosmic::widget::column()
+            .spacing(space_s)
+            .align_x(cosmic::iced::Alignment::Center);
+
+        if !prev_text.is_empty() {
+            lyric_col = lyric_col.push(
+                cosmic::widget::container(cosmic::widget::text::caption(prev_text))
+                    .width(cosmic::iced::Length::Fill)
+                    .align_x(cosmic::iced::alignment::Horizontal::Center),
+            );
+        }
+
+        lyric_col = lyric_col.push(
+            cosmic::widget::container(
+                cosmic::widget::text(current_text).size(18),
+            )
+            .width(cosmic::iced::Length::Fill)
+            .align_x(cosmic::iced::alignment::Horizontal::Center),
+        );
+
+        if !next_text.is_empty() {
+            lyric_col = lyric_col.push(
+                cosmic::widget::container(cosmic::widget::text::caption(next_text))
+                    .width(cosmic::iced::Length::Fill)
+                    .align_x(cosmic::iced::alignment::Horizontal::Center),
+            );
+        }
+
+        let lyric_card = cosmic::widget::container(lyric_col)
+            .padding(space_m)
+            .class(cosmic::theme::Container::Card)
+            .width(cosmic::iced::Length::Fill);
+
+        col = col
+            .push(lyric_card)
+            .push(cosmic::widget::divider::horizontal::default());
+    }
+
+    col.push(
+        cosmic::widget::container(controls)
+            .align_x(cosmic::iced::alignment::Horizontal::Center)
+            .width(cosmic::iced::Length::Fill),
+    )
+    .push(cosmic::widget::divider::horizontal::default())
+    .push(volume_row)
+    .into()
 }
 
 fn view_settings_tab(app: &CosmicAppletMusic, _space_s: f32, space_m: f32) -> Element<'_, Message> {
@@ -199,6 +267,31 @@ fn view_settings_tab(app: &CosmicAppletMusic, _space_s: f32, space_m: f32) -> El
     let discovered_players = app.music_controller.get_discovered_players();
 
     let mut settings_content = cosmic::widget::column().spacing(space_m);
+
+    // Lyrics section
+    settings_content = settings_content.push(cosmic::widget::text::title4("Lyrics"));
+    if let Some(ref config) = app.config_manager {
+        let show_lyrics = config.get_show_lyrics();
+        let show_romaji = config.get_show_romaji();
+        let lyrics_checkbox = cosmic::widget::checkbox("Show synced lyrics in applet", show_lyrics)
+            .on_toggle(Message::ToggleShowLyrics);
+        settings_content = settings_content
+            .push(lyrics_checkbox)
+            .push(cosmic::widget::text::caption(
+                "Fetches time-synced lyrics from lrclib.net and displays the current line",
+            ));
+        if show_lyrics {
+            let romaji_checkbox =
+                cosmic::widget::checkbox("Romanize lyrics (romaji)", show_romaji)
+                    .on_toggle(Message::ToggleShowRomaji);
+            settings_content = settings_content
+                .push(romaji_checkbox)
+                .push(cosmic::widget::text::caption(
+                    "Converts Japanese kanji/kana to romaji for easier reading",
+                ));
+        }
+    }
+    settings_content = settings_content.push(cosmic::widget::divider::horizontal::default());
 
     // Multi-player mode section
     settings_content = settings_content.push(cosmic::widget::text::title4("Multi-Player Mode"));

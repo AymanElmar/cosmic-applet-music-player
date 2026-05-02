@@ -1,4 +1,5 @@
 use crate::config::ConfigManager;
+use crate::lyrics::{self, LyricLine};
 use crate::music::{MusicController, PlayerInfo};
 use cosmic::app::{Core, Task};
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};
@@ -13,14 +14,19 @@ mod view;
 pub struct CosmicAppletMusic {
     core: Core,
     popup: Option<Id>,
-    player_info: PlayerInfo,
+    pub player_info: PlayerInfo,
     music_controller: MusicController,
-    config_manager: Option<ConfigManager>,
+    pub config_manager: Option<ConfigManager>,
     album_art_handle: Option<cosmic::iced::widget::image::Handle>,
     current_art_url: Option<String>,
     active_tab: PopupTab,
-    all_players_info: Vec<PlayerInfo>,
+    pub all_players_info: Vec<PlayerInfo>,
     player_album_arts: std::collections::HashMap<String, cosmic::iced::widget::image::Handle>,
+    pub lyrics: Vec<LyricLine>,
+    lyrics_track_key: String,
+    lyric_raw: String,
+    lyric_chunks: Vec<String>,
+    pub current_lyric: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +48,11 @@ impl Default for CosmicAppletMusic {
             active_tab: PopupTab::Controls,
             all_players_info: Vec::new(),
             player_album_arts: std::collections::HashMap::new(),
+            lyrics: Vec::new(),
+            lyrics_track_key: String::new(),
+            lyric_raw: String::new(),
+            lyric_chunks: Vec::new(),
+            current_lyric: String::new(),
         }
     }
 }
@@ -75,6 +86,9 @@ pub enum Message {
     AlbumArtLoadedPlayer(String, Option<cosmic::iced::widget::image::Handle>),
     ToggleShowAllPlayers(bool),
     ToggleHideInactive(bool),
+    ToggleShowLyrics(bool),
+    ToggleShowRomaji(bool),
+    LyricsLoaded(Vec<LyricLine>),
 }
 
 impl Application for CosmicAppletMusic {
@@ -160,6 +174,9 @@ impl Application for CosmicAppletMusic {
             }
             Message::ToggleShowAllPlayers(enabled) => self.handle_toggle_show_all_players(enabled),
             Message::ToggleHideInactive(enabled) => self.handle_toggle_hide_inactive(enabled),
+            Message::ToggleShowLyrics(enabled) => self.handle_toggle_show_lyrics(enabled),
+            Message::ToggleShowRomaji(enabled) => self.handle_toggle_show_romaji(enabled),
+            Message::LyricsLoaded(lines) => self.handle_lyrics_loaded(lines),
         }
     }
 
@@ -243,16 +260,63 @@ impl CosmicAppletMusic {
             (None, None) => false,
         };
 
+        let show_lyrics = self
+            .config_manager
+            .as_ref()
+            .map(|c| c.get_show_lyrics())
+            .unwrap_or(false);
+
+        let show_romaji = self
+            .config_manager
+            .as_ref()
+            .map(|c| c.get_show_romaji())
+            .unwrap_or(false);
+
+        // Detect track change
+        let new_track_key = format!("{}\x00{}", info.artist, info.title);
+        let track_changed = new_track_key != self.lyrics_track_key;
+
         self.player_info = info.clone();
 
+        let mut tasks: Vec<Task<Message>> = Vec::new();
+
         if should_load_art {
-            if let Some(url) = info.art_url {
+            if let Some(ref url) = info.art_url {
                 self.current_art_url = Some(url.clone());
-                return Task::done(cosmic::Action::App(Message::LoadAlbumArt(url)));
+                tasks.push(Task::done(cosmic::Action::App(Message::LoadAlbumArt(url.clone()))));
             }
         }
 
-        Task::none()
+        if show_lyrics {
+            if track_changed {
+                self.lyrics_track_key = new_track_key;
+                self.lyrics = Vec::new();
+                self.lyric_raw = String::new();
+                self.lyric_chunks = Vec::new();
+                self.current_lyric = String::new();
+
+                let artist = info.artist.clone();
+                let title = info.title.clone();
+                let album = info.album.clone();
+                let duration_us = info.position_us; // will use 0 as fallback; lrclib uses metadata
+                tasks.push(Task::perform(
+                    async move {
+                        lyrics::fetch_lyrics(&artist, &title, &album, duration_us).await
+                            .unwrap_or_default()
+                    },
+                    |lines| cosmic::Action::App(Message::LyricsLoaded(lines)),
+                ));
+            } else {
+                // Update current lyric chunk based on position
+                self.apply_romaji(show_romaji, info.position_us);
+            }
+        }
+
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
+        }
     }
 
     fn handle_find_player(&mut self) -> Task<Message> {
@@ -475,5 +539,69 @@ impl CosmicAppletMusic {
             let _ = config.set_hide_inactive_players(enabled);
         }
         Task::none()
+    }
+
+    fn handle_toggle_show_lyrics(&mut self, enabled: bool) -> Task<Message> {
+        if let Some(ref mut config) = self.config_manager {
+            let _ = config.set_show_lyrics(enabled);
+        }
+        if !enabled {
+            self.current_lyric = String::new();
+            self.lyrics = Vec::new();
+            self.lyric_raw = String::new();
+            self.lyric_chunks = Vec::new();
+            self.lyrics_track_key = String::new();
+        } else {
+            // Trigger a fetch for the current track
+            self.lyrics_track_key = String::new();
+        }
+        Task::none()
+    }
+
+    fn handle_toggle_show_romaji(&mut self, enabled: bool) -> Task<Message> {
+        if let Some(ref mut config) = self.config_manager {
+            let _ = config.set_show_romaji(enabled);
+        }
+        let position_us = self.player_info.position_us;
+        self.apply_romaji(enabled, position_us);
+        Task::none()
+    }
+
+    fn handle_lyrics_loaded(&mut self, lines: Vec<LyricLine>) -> Task<Message> {
+        self.lyrics = lines;
+        let show_romaji = self
+            .config_manager
+            .as_ref()
+            .map(|c| c.get_show_romaji())
+            .unwrap_or(false);
+        let position_us = self.player_info.position_us;
+        self.apply_romaji(show_romaji, position_us);
+        Task::none()
+    }
+
+    fn apply_romaji(&mut self, show_romaji: bool, position_us: u64) {
+        if self.lyrics.is_empty() {
+            self.current_lyric = String::new();
+            return;
+        }
+        let idx = lyrics::current_line_idx(&self.lyrics, position_us);
+        let line_text = &self.lyrics[idx].text;
+
+        let display_text = if show_romaji {
+            lyrics::to_romaji(line_text)
+        } else {
+            line_text.clone()
+        };
+
+        if display_text != self.lyric_raw {
+            self.lyric_raw = display_text.clone();
+            self.lyric_chunks = lyrics::split_into_chunks(&display_text, lyrics::MAX_LYRIC_CHARS);
+        }
+
+        let line_start_us = self.lyrics[idx].time_us;
+        let line_end_us = self.lyrics.get(idx + 1).map(|l| l.time_us).unwrap_or(u64::MAX);
+        let chunk_idx = lyrics::chunk_idx_for_position(line_start_us, line_end_us, position_us, self.lyric_chunks.len());
+
+        self.current_lyric = self.lyric_chunks.get(chunk_idx).cloned().unwrap_or_default();
     }
 }
