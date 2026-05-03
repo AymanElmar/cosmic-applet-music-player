@@ -1,6 +1,10 @@
 # Music Player Applet for the COSMIC™ Desktop
 
 A modern music player applet for the COSMIC™ desktop with MPRIS integration, providing seamless control of your music directly from the panel.
+# Additions
++ changed display to display song name and artist (from https://github.com/nomoth/cosmic-applet-spotify)
++ added ability to display lyrics on tray (https://github.com/user354015/muse)
++ added translation to romanized for japanese songs
 
 ## Screenshots
 

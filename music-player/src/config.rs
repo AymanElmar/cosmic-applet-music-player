@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub selected_player: Option<String>,
     pub show_all_players: bool,
     pub hide_inactive_players: bool,
+    pub show_lyrics: bool,
+    pub show_romaji: bool,
 }
 
 impl Default for AppConfig {
@@ -21,6 +23,8 @@ impl Default for AppConfig {
             selected_player: None,
             show_all_players: false,
             hide_inactive_players: false,
+            show_lyrics: false,
+            show_romaji: false,
         }
     }
 }
@@ -86,6 +90,24 @@ impl ConfigManager {
 
     pub fn set_hide_inactive_players(&mut self, hide_inactive: bool) -> anyhow::Result<()> {
         self.app_config.hide_inactive_players = hide_inactive;
+        self.save_config()
+    }
+
+    pub fn get_show_lyrics(&self) -> bool {
+        self.app_config.show_lyrics
+    }
+
+    pub fn set_show_lyrics(&mut self, show: bool) -> anyhow::Result<()> {
+        self.app_config.show_lyrics = show;
+        self.save_config()
+    }
+
+    pub fn get_show_romaji(&self) -> bool {
+        self.app_config.show_romaji
+    }
+
+    pub fn set_show_romaji(&mut self, show: bool) -> anyhow::Result<()> {
+        self.app_config.show_romaji = show;
         self.save_config()
     }
 

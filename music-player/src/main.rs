@@ -5,6 +5,7 @@
 mod app;
 mod audio;
 mod config;
+mod lyrics;
 mod music;
 
 use app::CosmicAppletMusic;
