@@ -83,11 +83,24 @@ pub fn view(app: &CosmicAppletMusic) -> Element<'_, Message> {
     .into()
 }
 
+const TRACK_MAX_CHARS: usize = 40;
+
 fn format_track(symbol: &str, artist: &str, title: &str) -> String {
-    if artist.is_empty() || artist == "Unknown Artist" {
+    let text = if artist.is_empty() || artist == "Unknown Artist" {
         format!("{} {}", symbol, title)
     } else {
         format!("{} {} - {}", symbol, artist, title)
+    };
+    truncate(&text, TRACK_MAX_CHARS)
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let mut chars = s.chars();
+    let truncated: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        format!("{}…", truncated)
+    } else {
+        truncated
     }
 }
 
